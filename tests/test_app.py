@@ -211,3 +211,16 @@ def test_market_hours():
     assert market_hours(datetime(2026, 11, 5, 10, tzinfo=KST))       # 목요일 10시
     assert not market_hours(datetime(2026, 11, 5, 20, tzinfo=KST))   # 장 마감 후
     assert not market_hours(datetime(2026, 11, 7, 10, tzinfo=KST))   # 토요일
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("(서울=연합뉴스) 이성한 기자 = 미국 증시가 폭락했다.", "미국 증시가 폭락했다."),
+    ("(워싱턴=연합뉴스) 백나리 특파원 = 트럼프 대통령은", "트럼프 대통령은"),
+    ("[한국경제] 코스피가 올랐다.", "코스피가 올랐다."),
+    ("(서울=연합뉴스) 이상현 민선희 기자 = 캄보디아 취업 사기", "캄보디아 취업 사기"),
+    ("(서울=연합뉴스) 김철수 기자·이영희 특파원 = 협상이 타결됐다.", "협상이 타결됐다."),
+    ("(전남광주=연합뉴스) 기상청은 6일 풍랑주의보를", "기상청은 6일 풍랑주의보를"),
+    ("한국은행이 기준금리를 동결했다.", "한국은행이 기준금리를 동결했다."),
+])
+def test_strip_byline(raw, expected):
+    assert sources.strip_byline(raw) == expected

@@ -17,11 +17,21 @@ from .topics import classify
 log = logging.getLogger(__name__)
 
 _TAG = re.compile(r"<[^>]+>")
+# 기사 첫머리의 "(서울=연합뉴스) 홍길동 기자 = ", "[한국경제] ", "홍길동 기자 = " 같은 머리말
+_BYLINE = re.compile(
+    r"^\s*(?:[\(\[][^\)\]]{1,30}[\)\]]\s*)?"
+    r"(?:(?:[가-힣]{2,4}[\s·,]*){1,4}(?:기자|특파원)(?:[\s·,]+(?:[가-힣]{2,4}[\s·,]*){1,4}(?:기자|특파원))*\s*=\s*)?"
+)
 
 
 def _clean(text: str | None) -> str:
     text = html.unescape(_TAG.sub(" ", text or ""))
     return re.sub(r"\s+", " ", text).strip()
+
+
+def strip_byline(text: str) -> str:
+    stripped = _BYLINE.sub("", text, count=1).strip()
+    return stripped or text
 
 
 def load_feeds() -> list[dict]:
@@ -37,7 +47,7 @@ def parse_feed(raw: bytes | str, source: str, topic: str | None) -> list[db.Arti
         title = _clean(e.get("title"))
         if not url or not title:
             continue
-        desc = _clean(e.get("summary") or e.get("description"))[:600]
+        desc = strip_byline(_clean(e.get("summary") or e.get("description")))[:600]
         st = e.get("published_parsed") or e.get("updated_parsed")
         published = (datetime.fromtimestamp(calendar.timegm(st), tz=timezone.utc)
                      if st else datetime.now(timezone.utc))
