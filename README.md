@@ -27,7 +27,33 @@
 
 `ANTHROPIC_API_KEY`가 없으면 요약은 기사 소개문을 그대로 보여주는 기본 모드로, 지수 분석은 관련 최신 뉴스 목록으로 대신 표시됩니다.
 
-## 실행 방법
+## 웹 주소로 공개하기 (GitHub Pages)
+
+서버 없이 GitHub만으로 누구나 휴대폰에서 볼 수 있는 주소를 만듭니다.
+주소: **https://layla121212.github.io/daily_news/**
+
+`.github/workflows/publish.yml`이 10분마다 자동으로 실행되어 뉴스 수집, 시간별 요약, 시세 조회, (평일 장중) 지수 분석을 하고 웹페이지를 다시 올립니다.
+쌓인 데이터(`news.db`)는 `data` 브랜치에 보관합니다. 커밋 1개로 매번 덮어쓰므로 저장소가 계속 커지지 않습니다.
+
+처음 한 번만 휴대폰 브라우저에서 설정하면 됩니다.
+
+1. 이 PR을 `main`에 합칩니다 (자동 실행은 `main` 브랜치에서만 돌아갑니다).
+2. 저장소 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 바꿉니다.
+3. (선택) AI 요약·분석을 쓰려면 **Settings → Secrets and variables → Actions → New repository secret**에서 이름 `ANTHROPIC_API_KEY`, 값에 Claude API 키를 넣습니다.
+4. **Actions → publish → Run workflow**로 한 번 실행하면 몇 분 뒤 위 주소에 사이트가 열립니다.
+
+정적 사이트 모드의 차이점:
+- 시세와 뉴스는 약 10분마다 갱신됩니다. GitHub의 예약 실행은 늦어질 때가 있어 실제로는 10~20분 간격일 수 있습니다. 화면의 5초·10초 갱신은 그 사이에 새 데이터가 올라왔는지 확인합니다.
+- 날짜 없이 단어로 검색하면 최근 7일의 요약·기사에서 찾습니다. 날짜를 고르면 그날 전체에서 찾습니다.
+- 요약에 쓰이지 않은 기사는 30일 뒤 정리됩니다(`ARTICLE_RETENTION_DAYS`). 요약과 요약에 쓰인 기사는 계속 남습니다.
+- 지수 분석은 평일 08:30~16:00(한국시간)에 30분마다 새로 만들고, 그 외 시간에는 마지막 분석을 보여줍니다.
+
+### Claude API 비용 (대략)
+
+API 키를 넣으면 요약은 하루 24번, 지수 분석은 평일 하루 약 15번 Claude를 호출합니다. 기사 양에 따라 다르지만 기본 모델(`claude-opus-5-5`)로 **월 수십~100달러 안팎**이 들 수 있습니다.
+비용을 줄이려면 **Settings → Secrets and variables → Actions → Variables**에 `CLAUDE_MODEL` 변수를 만들어 `claude-sonnet-5-5`(약 절반) 또는 `claude-haiku-5-5`(훨씬 저렴)로 바꿀 수 있습니다. 키를 넣지 않으면 비용 없이 기본 모드(기사 소개문 요약)로 동작합니다.
+
+## 실행 방법 (내 컴퓨터에서 서버로)
 
 ```bash
 python3 -m venv .venv

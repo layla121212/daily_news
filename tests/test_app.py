@@ -169,3 +169,45 @@ def test_api_endpoints(monkeypatch):
         assert c.get("/api/live/news", params={"after_id": newest}).json()["items"] == []
         assert c.get("/api/articles", params={"q": "반도체"}).json()["items"][0]["url"] == "https://ex.com/a"
         assert "데일리" in c.get("/").text
+
+
+def test_publish_exports_static_site(tmp_path, monkeypatch):
+    import json
+
+    from app import publish
+
+    start = datetime(2026, 11, 5, 9, tzinfo=KST)
+    _seed(start)
+    summarizer.summarize_hour(start)
+    mkt = {"indices": [], "futures": {"kr": [], "us": []}, "errors": [], "updated_at": "x"}
+    ana = publish._analysis(tmp_path / "state" / "analysis.json", mkt)
+    out = tmp_path / "site"
+    out.mkdir()
+    publish.export(out, mkt, ana)
+    assert 'data-mode="static"' in (out / "index.html").read_text(encoding="utf-8")
+    assert (out / "static" / "app.js").exists() and not (out / "static" / "index.html").exists()
+    meta = json.loads((out / "data" / "meta.json").read_text(encoding="utf-8"))
+    assert meta["summary_dates"] == ["2026-11-05"] and "경제" in meta["topics"]
+    day = json.loads((out / "data" / "summaries" / "2026-11-05.json").read_text(encoding="utf-8"))
+    assert len(day) == 2 and day[0]["articles"]
+    assert len(json.loads((out / "data" / "live" / "news.json").read_text(encoding="utf-8"))) == 3
+
+
+def test_publish_reuses_recent_analysis(tmp_path, monkeypatch):
+    from app import publish
+
+    calls = []
+    monkeypatch.setattr(analysis, "build", lambda m: calls.append(1) or
+                        {"method": "claude", "headline": "h", "points": [], "generated_at": db.now_kst().isoformat()})
+    state = tmp_path / "a.json"
+    publish._analysis(state, {})
+    publish._analysis(state, {})
+    assert len(calls) == 1
+
+
+def test_market_hours():
+    from app.publish import market_hours
+
+    assert market_hours(datetime(2026, 11, 5, 10, tzinfo=KST))       # 목요일 10시
+    assert not market_hours(datetime(2026, 11, 5, 20, tzinfo=KST))   # 장 마감 후
+    assert not market_hours(datetime(2026, 11, 7, 10, tzinfo=KST))   # 토요일
