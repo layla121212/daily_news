@@ -188,6 +188,19 @@ def save_digest(date: str, hour: int, method: str, items: list[dict]) -> None:
         )
 
 
+def drop_unknown_topics(topics: list[str]) -> int:
+    """더 이상 쓰지 않는 주제(예: 삭제한 '사회')의 요약과 기사를 지운다.
+    요약에 연결된 기사는 다른 주제 요약에도 쓰였으면 남긴다."""
+    marks = ",".join("?" * len(topics))
+    with connect() as conn:
+        n = conn.execute(f"DELETE FROM summaries WHERE topic NOT IN ({marks})", topics).rowcount
+        n += conn.execute(
+            f"DELETE FROM articles WHERE topic NOT IN ({marks}) "
+            "AND id NOT IN (SELECT article_id FROM summary_articles)", topics,
+        ).rowcount
+    return n
+
+
 def search_summaries(date: str | None = None, topic: str | None = None, q: str | None = None,
                      limit: int = 300) -> list[dict]:
     """요약 검색. q는 요약 본문뿐 아니라 요약에 쓰인 원문 기사 제목·내용에서도 찾는다."""

@@ -119,6 +119,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     db.init()
+    log.info("삭제한 주제의 요약·기사 %d건 정리", db.drop_unknown_topics(list(TOPICS)))
     if not args.skip_collect:
         sources.collect()
         jobs.catch_up(hours=3)

@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import analysis, claude, config, db, market, sources, summarizer
-from app.topics import classify
+from app.topics import TOPICS, classify
 
 KST = config.KST
 
@@ -36,7 +36,7 @@ def _seed(hour_start: datetime) -> list[int]:
                    hour_start + timedelta(minutes=5)),
         db.Article("https://ex.com/b", "한은 기준금리 동결", "한국은행이 금리를 동결했다. 물가가 안정됐다.", "예시", "경제",
                    hour_start + timedelta(minutes=30)),
-        db.Article("https://ex.com/c", "다른 시간 기사", "범위 밖", "예시", "사회", hour_start + timedelta(hours=2)),
+        db.Article("https://ex.com/c", "다른 시간 기사", "범위 밖", "예시", "국제", hour_start + timedelta(hours=2)),
     ]
     assert db.insert_articles(items) == 3
     assert db.insert_articles(items[:1]) == 0  # 같은 URL은 다시 저장하지 않음
@@ -53,7 +53,7 @@ def test_parse_feed_cleans_html_and_classifies():
 
 
 def test_classify_default_when_no_keyword():
-    assert classify("오늘의 날씨", default="사회") == "사회"
+    assert classify("오늘의 날씨", default="정치") == "정치"
 
 
 def test_basic_digest_saved_and_searchable():
@@ -224,3 +224,17 @@ def test_market_hours():
 ])
 def test_strip_byline(raw, expected):
     assert sources.strip_byline(raw) == expected
+
+
+def test_drop_unknown_topics():
+    start = datetime(2026, 11, 5, 9, tzinfo=KST)
+    ids = _seed(start)
+    db.insert_articles([db.Article("https://ex.com/s", "화재 발생", "소방", "예시", "사회", start)])
+    db.save_digest("2026-11-05", 9, "basic", [
+        {"topic": "사회", "title": "화재", "summary": "불", "article_ids": [ids[0]]},
+        {"topic": "경제", "title": "금리", "summary": "동결", "article_ids": [ids[1]]},
+    ])
+    assert db.drop_unknown_topics(list(TOPICS)) == 2  # 사회 요약 1건 + 사회 기사 1건
+    assert [s["topic"] for s in db.search_summaries()] == ["경제"]
+    assert all(a["topic"] != "사회" for a in db.search_articles())
+    assert len(db.search_articles()) == 3  # 다른 주제 기사는 그대로
