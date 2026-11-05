@@ -67,8 +67,9 @@ async function staticApi(path, p) {
     case "/api/live/analysis":
       return getJSON("live/analysis.json", true);
     case "/api/live/news": {
+      const m = await loadMeta(); // 데이터가 언제 갱신됐는지 함께 알려준다
       const all = (await getJSON("live/news.json", true)) || [];
-      return { items: all.filter((a) => a.id > (p.after_id || 0)).slice(0, p.limit || 30) };
+      return { items: all.filter((a) => a.id > (p.after_id || 0)).slice(0, p.limit || 30), data_updated_at: m.updated_at };
     }
   }
   throw new Error(`unknown ${path}`);
@@ -222,6 +223,8 @@ async function loadAnalysis() {
 let feed = [];
 let lastId = 0;
 let lastAt = null;
+let lastNew = null; // 마지막 새로고침에서 새로 들어온 기사 수
+let dataAt = null; // 정적 모드: 서버 데이터가 마지막으로 갱신된 시각
 let timer = null;
 let ticker = null;
 let nextAt = 0;
@@ -235,7 +238,11 @@ async function loadNews(initial) {
     return;
   }
   const fresh = new Set(initial ? [] : r.items.map((a) => a.id));
-  feed = (initial ? r.items : [...r.items, ...feed]).slice(0, 50);
+  feed = (initial ? r.items : [...r.items, ...feed])
+    .sort((a, b) => b.published_at.localeCompare(a.published_at) || b.id - a.id)
+    .slice(0, 50);
+  lastNew = initial ? null : r.items.length;
+  dataAt = r.data_updated_at || null;
   if (feed.length) lastId = Math.max(lastId, ...feed.map((a) => a.id));
   lastAt = new Date();
   $("#feed").innerHTML = feed.length
@@ -255,6 +262,8 @@ async function loadNews(initial) {
 function meta() {
   const iv = +$("#iv").value;
   let m = `마지막 조회 ${lastAt ? hms(lastAt) : "-"}`;
+  if (lastNew != null) m += lastNew ? ` · 새 기사 ${lastNew}건` : " · 새 기사 없음";
+  if (dataAt) m += ` · 데이터 업데이트 ${dataAt.slice(11, 16)}`;
   if (iv) m += ` · 다음 갱신까지 ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}초`;
   $("#meta").textContent = m;
 }

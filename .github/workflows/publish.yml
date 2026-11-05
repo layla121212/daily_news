@@ -4,7 +4,8 @@ name: publish
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # 정각·10분 단위는 GitHub 예약 실행이 몰려 자주 밀리므로 3분씩 비껴서 실행
+    - cron: "3-59/10 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
