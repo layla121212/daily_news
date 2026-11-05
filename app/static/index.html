@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>데일리 뉴스요약</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand"><b id="home">데일리<span>뉴스</span>요약</b><small>매시간 업데이트</small></div>
+  <form class="search" id="searchForm">
+    <input id="q" type="search" placeholder="단어로 검색 (예: 금리, 반도체, 부동산)" maxlength="50">
+    <input id="d" type="date" aria-label="날짜">
+    <button class="primary" type="submit">검색</button>
+  </form>
+  <div class="chips" id="chips"></div>
+  <div class="kw" id="kw"></div>
+</div></header>
+
+<main class="wrap" id="summaryView">
+  <h1 id="title">뉴스요약</h1>
+  <p class="lead">한 시간마다 주요 뉴스를 3줄로 요약해 드려요.</p>
+  <div class="status" id="status"></div>
+  <div id="list"></div>
+  <section id="articleSection" class="hidden">
+    <h2>관련 원문 기사</h2>
+    <div class="card"><ul class="list" id="articleList"></ul></div>
+  </section>
+</main>
+
+<main class="wrap hidden" id="liveView">
+  <h1>실시간 시장 · 뉴스</h1>
+  <p class="lead" id="liveLead"></p>
+
+  <h2>① 국내 지수</h2>
+  <div class="idx" id="idx"></div>
+
+  <h2>② 선물 가격</h2>
+  <div class="futgrid">
+    <div class="card"><h4>한국 지수 선물</h4><table class="fut" id="futKR"></table></div>
+    <div class="card"><h4>미국 지수 선물</h4><table class="fut" id="futUS"></table></div>
+  </div>
+
+  <h2>③ 지수는 왜 움직이고 있을까?</h2>
+  <div class="opinion" id="opinion"><span class="muted">분석을 불러오는 중…</span></div>
+
+  <h2>④ 실시간 뉴스</h2>
+  <div class="card">
+    <div class="bar">
+      <label for="iv">갱신 주기</label>
+      <select id="iv">
+        <option value="0">갱신 안 함 (처음 조회한 시점)</option>
+        <option value="5">5초</option>
+        <option value="10">10초</option>
+        <option value="30">30초</option>
+        <option value="60">1분</option>
+        <option value="300">5분</option>
+        <option value="1800">30분</option>
+      </select>
+      <button id="now" type="button">지금 새로고침</button>
+      <span class="meta" id="meta"></span>
+    </div>
+    <div class="feed" id="feed"></div>
+  </div>
+</main>
+<footer>뉴스 출처는 각 언론사에 있습니다. 시장 해석은 참고용이며 투자 권유가 아닙니다.</footer>
+<script src="static/app.js"></script>
+</body>
+</html>
