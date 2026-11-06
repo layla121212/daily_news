@@ -88,8 +88,10 @@ def live_analysis():
 
 
 @app.get("/api/live/news")
-def live_news(after_id: int = Query(0, ge=0), limit: int = Query(30, ge=1, le=100), topic: str | None = None):
+def live_news(after_id: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=300), topic: str | None = None):
     """실시간 뉴스. after_id를 주면 그 이후 새로 들어온 기사만 돌려준다."""
-    items = db.latest_articles(after_id=after_id, limit=limit, topic=_check_topic(topic))
+    from .publish import live_news as build_live_news
+
+    items = [a for a in build_live_news() if a["id"] > after_id and (not topic or a["topic"] == topic)][:limit]
     return {"items": items, "server_time": db.now_kst().isoformat(timespec="seconds"),
             "collect_interval": config.COLLECT_INTERVAL}

@@ -89,6 +89,21 @@ function renderChips() {
   $("#kw").innerHTML = kws.length ? "추천 키워드: " + kws.map((k) => `<button data-k="${esc(k)}">#${esc(k)}</button>`).join(" ") : "";
 }
 
+function groupBy(list, key) {
+  const m = new Map();
+  for (const x of list) {
+    const k = key(x);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(x);
+  }
+  return m;
+}
+// 화면 위 주제 버튼 순서대로 (목록에 없는 주제는 뒤로)
+function topicOrder(map) {
+  const order = Object.keys(TOPICS);
+  return [...map.keys()].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+}
+
 /* ---------- 요약 화면 ---------- */
 async function renderSummaries() {
   const q = $("#q").value.trim();
@@ -122,13 +137,19 @@ async function renderSummaries() {
     $("#list").innerHTML = [...groups]
       .map(([key, items]) => {
         const label = key.startsWith(data.date || "-") ? key.slice(11) : key.slice(5);
-        return `<div class="hour"><div class="time">${esc(label)}</div><div class="card">${items
+        // 테마(주제) 순서대로 묶어서 보여준다
+        const byTopic = groupBy(items, (s) => s.topic);
+        return `<div class="hour"><div class="time">${esc(label)}</div><div class="card">${topicOrder(byTopic)
           .map(
-            (s) => `<div class="item"><span class="tag">${esc(s.topic)}</span>
-          <h3>${hl(s.title, q)}</h3><p>${hl(s.summary, q)}</p>
-          <details class="src"><summary>요약에 쓰인 원문 ${s.articles.length}건</summary><ul>${s.articles
+            (t) => `<section class="tgroup"><div class="thead">${esc(t)}</div>${byTopic
+              .get(t)
+              .map(
+                (s) => `<div class="item"><h3>${hl(s.title, q)}</h3>${s.summary ? `<p>${hl(s.summary, q)}</p>` : ""}
+          <details class="src"><summary>${s.articles.length > 1 ? `같은 소식 기사 ${s.articles.length}건` : "원문 기사"}</summary><ul>${s.articles
             .map((a) => `<li><a href="${safeUrl(a.url)}" target="_blank" rel="noopener">${hl(a.title, q)}</a> · ${esc(a.source)}</li>`)
             .join("")}</ul></details></div>`
+              )
+              .join("")}</section>`
           )
           .join("")}</div></div>`;
       })
@@ -232,31 +253,51 @@ let nextAt = 0;
 async function loadNews(initial) {
   let r;
   try {
-    r = await api("/api/live/news", { after_id: initial ? 0 : lastId, limit: 30 });
+    r = await api("/api/live/news", { after_id: initial ? 0 : lastId, limit: 200 });
   } catch (e) {
     $("#meta").textContent = `뉴스 조회 실패: ${e.message}`;
     return;
   }
   const fresh = new Set(initial ? [] : r.items.map((a) => a.id));
-  feed = (initial ? r.items : [...r.items, ...feed])
+  const known = new Set(feed.map((a) => a.id));
+  feed = (initial ? r.items : [...r.items.filter((a) => !known.has(a.id)), ...feed])
     .sort((a, b) => b.published_at.localeCompare(a.published_at) || b.id - a.id)
-    .slice(0, 50);
+    .slice(0, 300);
   lastNew = initial ? null : r.items.length;
   dataAt = r.data_updated_at || null;
   if (feed.length) lastId = Math.max(lastId, ...feed.map((a) => a.id));
   lastAt = new Date();
-  $("#feed").innerHTML = feed.length
-    ? feed
-        .map(
-          (a) => `<div class="row ${fresh.has(a.id) ? "new" : ""}"><div class="t">${esc(a.published_at.slice(11, 16))}</div><div>
-        <a class="ti" href="${safeUrl(a.url)}" target="_blank" rel="noopener"><span class="tag">${esc(a.topic)}</span>${esc(a.title)}</a>${
-            fresh.has(a.id) ? '<span class="badge">NEW</span>' : ""
-          }
-        <div class="s">${esc(a.description.slice(0, 120))} <span class="muted">· ${esc(a.source)}</span></div></div></div>`
-        )
-        .join("")
-    : `<div class="empty">아직 수집된 뉴스가 없어요.</div>`;
+  $("#feed").innerHTML = feed.length ? renderFeed(feed, fresh) : `<div class="empty">아직 수집된 뉴스가 없어요.</div>`;
   meta();
+}
+
+const LIVE_STORIES_PER_TOPIC = 5;
+
+// 테마별로 묶고, 테마 안에서는 같은 소식을 하나로 합친다 (최신 기사가 대표)
+function renderFeed(list, fresh) {
+  const byTopic = groupBy(list, (a) => a.topic);
+  return topicOrder(byTopic)
+    .map((t) => {
+      const stories = [...groupBy(byTopic.get(t), (a) => a.story ?? a.id).values()].slice(0, LIVE_STORIES_PER_TOPIC);
+      const newCount = byTopic.get(t).filter((a) => fresh.has(a.id)).length;
+      return `<section class="tgroup"><div class="thead">${esc(t)}${newCount ? ` <span class="badge">새 기사 ${newCount}</span>` : ""}</div>${stories
+        .map((g) => {
+          const a = g[0];
+          const isNew = g.some((x) => fresh.has(x.id));
+          const more = g.slice(1);
+          return `<div class="row ${isNew ? "new" : ""}"><div class="t">${esc(a.published_at.slice(11, 16))}</div><div>
+          <a class="ti" href="${safeUrl(a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a>${isNew ? '<span class="badge">NEW</span>' : ""}
+          <div class="s">${esc(a.description.slice(0, 120))} <span class="muted">· ${esc(a.source)}</span></div>${
+            more.length
+              ? `<details class="src"><summary>같은 소식 ${more.length}건 더</summary><ul>${more
+                  .map((x) => `<li><a href="${safeUrl(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a> · ${esc(x.published_at.slice(11, 16))}</li>`)
+                  .join("")}</ul></details>`
+              : ""
+          }</div></div>`;
+        })
+        .join("")}</section>`;
+    })
+    .join("");
 }
 
 function meta() {
