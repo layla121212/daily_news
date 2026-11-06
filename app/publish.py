@@ -15,7 +15,7 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import analysis, config, db, jobs, market, sources
+from . import analysis, config, db, jobs, market, similar, sources, summarizer
 from .topics import TOPICS
 
 log = logging.getLogger("publish")
@@ -26,7 +26,7 @@ STATIC = config.BASE_DIR / "app" / "static"
 ARTICLE_RETENTION_DAYS = config._int("ARTICLE_RETENTION_DAYS", 30)
 # 지수 분석은 한국 장 시간(평일) 동안 이 간격으로만 새로 만든다 (Claude 비용 관리)
 STATIC_ANALYSIS_TTL = config._int("STATIC_ANALYSIS_TTL", 1800)
-LIVE_NEWS_COUNT = 50
+LIVE_NEWS_PER_TOPIC = 20  # 실시간 탭: 테마별 최신 기사 수
 
 
 def market_hours(now: datetime) -> bool:
@@ -77,6 +77,15 @@ def _analysis(state_path: Path, mkt: dict) -> dict:
     return prev  # 새 분석이 실패하면 이전 Claude 분석을 유지
 
 
+def live_news() -> list[dict]:
+    """실시간 탭용: 테마별 최신 기사에 같은 소식 묶음 정보를 붙인다."""
+    items = [a for t in TOPICS for a in db.latest_articles(limit=LIVE_NEWS_PER_TOPIC, topic=t)]
+    similar.assign_stories(items)
+    items.sort(key=lambda a: (a["published_at"], a["id"]), reverse=True)
+    return [{k: a[k] for k in ("id", "title", "url", "source", "topic", "published_at", "story", "story_size")}
+            | {"description": a["description"][:160]} for a in items]
+
+
 def export(out: Path, mkt: dict, ana: dict) -> None:
     data = out / "data"
     with db.connect() as conn:
@@ -93,7 +102,7 @@ def export(out: Path, mkt: dict, ana: dict) -> None:
         ])
     _write(data / "live" / "market.json", mkt)
     _write(data / "live" / "analysis.json", ana)
-    _write(data / "live" / "news.json", db.latest_articles(limit=LIVE_NEWS_COUNT))
+    _write(data / "live" / "news.json", live_news())
     _write(data / "meta.json", {
         "updated_at": db.now_kst().isoformat(timespec="seconds"),
         "today": db.now_kst().date().isoformat(),
@@ -123,6 +132,7 @@ def main() -> None:
     if not args.skip_collect:
         sources.collect()
         jobs.catch_up(hours=3)
+        log.info("옛 방식 요약 %d개 시간대 다시 만듦", summarizer.rebuild_outdated())
         log.info("오래된 기사 %d건 정리", prune())
     mkt = market.fetch_market()
     ana = _analysis(args.state, mkt)

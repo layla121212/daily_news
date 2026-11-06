@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
@@ -186,6 +186,30 @@ def save_digest(date: str, hour: int, method: str, items: list[dict]) -> None:
             "INSERT OR REPLACE INTO digests(date,hour,method,created_at) VALUES (?,?,?,?)",
             (date, hour, method, created),
         )
+
+
+def recent_summary_titles(before: datetime, hours: int = 12) -> list[str]:
+    """before 이전 hours시간 동안의 요약 제목과, 그 요약에 쓰인 기사 제목들."""
+    since = before - timedelta(hours=hours)
+    lo, hi = since.strftime("%Y-%m-%dT%H"), before.strftime("%Y-%m-%dT%H")
+    key = "s.date || printf('T%02d', s.hour)"
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT s.title FROM summaries s WHERE {key} >= ? AND {key} < ? "
+            f"UNION ALL SELECT a.title FROM summaries s JOIN summary_articles sa ON sa.summary_id = s.id "
+            f"JOIN articles a ON a.id = sa.article_id WHERE {key} >= ? AND {key} < ?",
+            (lo, hi, lo, hi),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def digests_since(since: datetime) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM digests WHERE date || printf('T%02d', hour) >= ? ORDER BY date, hour",
+            (since.strftime("%Y-%m-%dT%H"),),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def drop_unknown_topics(topics: list[str]) -> int:

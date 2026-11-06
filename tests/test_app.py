@@ -32,9 +32,9 @@ def tmp_db(tmp_path, monkeypatch):
 
 def _seed(hour_start: datetime) -> list[int]:
     items = [
-        db.Article("https://ex.com/a", "코스피, 반도체 강세에 상승", "외국인이 삼성전자를 순매수했다.", "예시", "증시·투자",
+        db.Article("https://ex.com/a", "[속보] 코스피, 반도체 강세에 상승", "외국인이 삼성전자를 순매수했다.", "예시", "증시·투자",
                    hour_start + timedelta(minutes=5)),
-        db.Article("https://ex.com/b", "한은 기준금리 동결", "한국은행이 금리를 동결했다. 물가가 안정됐다.", "예시", "경제",
+        db.Article("https://ex.com/b", "한은 기준금리 동결(종합)", "한국은행이 금리를 동결했다. 물가가 안정됐다.", "예시", "경제",
                    hour_start + timedelta(minutes=30)),
         db.Article("https://ex.com/c", "다른 시간 기사", "범위 밖", "예시", "국제", hour_start + timedelta(hours=2)),
     ]
@@ -238,3 +238,85 @@ def test_drop_unknown_topics():
     assert [s["topic"] for s in db.search_summaries()] == ["경제"]
     assert all(a["topic"] != "사회" for a in db.search_articles())
     assert len(db.search_articles()) == 3  # 다른 주제 기사는 그대로
+
+
+# ---------- 테마별 중요 소식 고르기 ----------
+
+def _art(i, title, topic="증시·투자", minute=0, desc="설명 문장이다."):
+    return {"id": i, "title": title, "description": desc, "topic": topic, "source": "예시",
+            "url": f"https://ex.com/{i}", "published_at": f"2026-11-06T09:{minute:02d}:00+09:00"}
+
+
+def test_same_story_rules():
+    from app import similar
+
+    assert similar.same_story("[속보] 증시 급락에 코스피 서킷브레이커 발동…5천피 붕괴",
+                              "증시 급락에 코스피 서킷브레이커 발동…'5천피' 무너져")
+    # 문장 구조만 비슷한 다른 회사 실적은 다른 소식
+    assert not similar.same_story("한국콜마 3분기 영업익 819억원…작년 동기 대비 40.5% 증가",
+                                  "코웨이 3분기 영업익 2천608억원…작년 동기 대비 12% 증가")
+    # 표현이 달라도 같은 구체적 수치면 같은 소식
+    assert similar.same_story("[2보] 뉴욕증시, AI 기술주 투매에 급락…나스닥 5.5%↓",
+                              "AI 규제 공포에 나스닥 5.5%↓…하루만에 시총 3천400조원 증발(종합2보)")
+    assert similar.is_minor("[게시판] 롯데재단, 저소득층 지원") and similar.is_minor("[인사] 국가데이터처")
+    assert not similar.is_minor("[속보] 코스피 급락")
+
+
+def test_basic_digest_picks_important_per_topic():
+    arts = [
+        _art(1, "[속보] 증시 급락에 코스피 서킷브레이커 발동…5천피 붕괴", minute=1),
+        _art(2, "증시 급락에 코스피 서킷브레이커 발동…'5천피' 무너져", minute=2),
+        _art(3, "코스피 서킷브레이커 발동, 20분간 매매 중단(종합)", minute=3),
+        _art(4, "한국콜마 3분기 영업익 819억원…작년 대비 40.5% 증가", minute=4),
+        _art(5, "한국콜마, 3분기 영업익 819억원 기록", minute=5),
+        _art(6, "어느 회사 신제품 출시", minute=6),               # 한 건뿐이고 속보도 아님 → 제외
+        _art(7, "[게시판] 증권사 사회공헌 행사", minute=7),        # 단신 → 제외
+        _art(8, "정부, 내년 예산안 국회 제출", topic="정치", minute=8),  # 정치는 한 건뿐 → 0건
+    ]
+    items = summarizer.basic_digest(arts)
+    titles = [i["title"] for i in items]
+    assert {i["topic"] for i in items} == {"증시·투자"}
+    assert len(items) == 2 and len(items[0]["article_ids"]) >= 2
+    assert not any("신제품" in t or "게시판" in t for t in titles)
+    # 이전 시간에 이미 요약한 소식은 건너뛴다
+    again = summarizer.basic_digest(arts, previous=["코스피 서킷브레이커 발동에 증시 5천피 붕괴"])
+    assert all("서킷브레이커" not in i["title"] for i in again) and len(again) == 1
+
+
+def test_basic_digest_busy_topic_gets_one_and_max_three():
+    busy = [_art(i, f"국제 소식 제목 {chr(0xAC00 + i * 37)}{chr(0xAC00 + i * 91)} 회담", topic="국제", minute=i)
+            for i in range(1, 10)]
+    items = summarizer.basic_digest(busy)
+    assert len(items) == 1 and items[0]["topic"] == "국제"  # 겹치는 소식이 없어도 기사가 많으면 대표 1건
+    heads = ["환율 급등", "반도체 수출 호조", "금값 사상 최고", "비트코인 폭락", "공모주 청약 마감", "채권 금리 하락"]
+    many = [_art(100 + i, f"[속보] {h}", minute=i) for i, h in enumerate(heads)]
+    assert len(summarizer.basic_digest(many)) == 3  # 테마당 최대 3건
+
+
+def test_rebuild_outdated_resummarizes_old_digests():
+    start = db.now_kst().replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
+    _seed(start)
+    db.save_digest(start.strftime("%Y-%m-%d"), start.hour, "basic", [])  # 옛 방식 표시
+    assert summarizer.rebuild_outdated() == 1
+    assert summarizer.rebuild_outdated() == 0
+    assert len(db.search_summaries(date=start.strftime("%Y-%m-%d"))) == 2
+
+
+def test_assign_stories_groups_within_topic():
+    from app import similar
+
+    arts = [
+        _art(1, "[속보] 코스피 서킷브레이커 발동…5천피 붕괴", minute=1),
+        _art(2, "코스피 서킷브레이커 발동…5천피 무너져", minute=2),
+        _art(3, "코스피 서킷브레이커 발동…5천피 무너져", topic="경제", minute=3),  # 테마가 다르면 따로
+    ]
+    similar.assign_stories(arts)
+    assert arts[0]["story"] == arts[1]["story"] == 1 and arts[0]["story_size"] == 2
+    assert arts[2]["story"] == 3
+
+
+def test_basic_digest_skips_empty_description():
+    arts = [_art(1, "[속보] 코스피 서킷브레이커 발동", desc="(서울=연합뉴스)"),
+            _art(2, "코스피 서킷브레이커 발동…매매 중단", minute=2, desc="(서울=연합뉴스) 홍길동 기자 = ")]
+    items = summarizer.basic_digest(arts)
+    assert len(items) == 1 and items[0]["summary"] == ""
