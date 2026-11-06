@@ -21,6 +21,7 @@ STATIC = config.BASE_DIR / "app" / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    db.drop_unknown_topics(list(TOPICS))
     tasks = []
     if config.ENABLE_JOBS:
         tasks = [asyncio.create_task(jobs.collect_loop()), asyncio.create_task(jobs.summary_loop())]

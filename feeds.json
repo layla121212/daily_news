@@ -3,7 +3,6 @@
   {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/market.xml", "topic": "증시·투자"},
   {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/industry.xml", "topic": "산업·기업"},
   {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/politics.xml", "topic": "정치"},
-  {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/society.xml", "topic": "사회"},
   {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/international.xml", "topic": "국제"},
   {"name": "한국경제", "url": "https://www.hankyung.com/feed/economy", "topic": "경제"},
   {"name": "한국경제", "url": "https://www.hankyung.com/feed/finance", "topic": "증시·투자"},
