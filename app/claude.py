@@ -9,14 +9,18 @@ from pydantic import BaseModel
 
 from . import config
 
+# 로그 기록용
 log = logging.getLogger(__name__)
 
+# 응답 형식 클래스 (pydantic 모델) 자리표시
 T = TypeVar("T", bound=BaseModel)
 
+# Claude API 클라이언트 (처음 쓸 때 만든다)
 _client: anthropic.Anthropic | None = None
 
 
 def client() -> anthropic.Anthropic:
+    """Claude API 클라이언트 (한 번 만들어 재사용)."""
     global _client
     if _client is None:
         _client = anthropic.Anthropic(timeout=120.0)

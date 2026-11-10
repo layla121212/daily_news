@@ -320,3 +320,102 @@ def test_basic_digest_skips_empty_description():
             _art(2, "코스피 서킷브레이커 발동…매매 중단", minute=2, desc="(서울=연합뉴스) 홍길동 기자 = ")]
     items = summarizer.basic_digest(arts)
     assert len(items) == 1 and items[0]["summary"] == ""
+
+
+# ---------- 요약 탭: 하루 뉴스 정리 ----------
+
+def _day_summaries(day: str, n: int) -> None:
+    """day 하루에 서로 다른 시간별 요약 n개를 만든다. 요약마다 근거 기사 수(1~4건)를 다르게 한다."""
+    heads = ["환율 급등에 수입물가 우려", "반도체 수출 호조 이어져", "코스피 급락 서킷브레이커", "노사 임금협상 타결",
+             "금값 사상 최고", "비트코인 폭락", "공모주 청약 흥행", "채권 금리 하락", "부동산 거래 회복", "조선 수주 확대",
+             "항공사 실적 부진", "AI 투자 확대"]
+    start = datetime.fromisoformat(f"{day}T09:00:00").replace(tzinfo=KST)
+    for i in range(n):
+        db.insert_articles([db.Article(f"https://ex.com/{day}/{i}/{k}", f"{heads[i]} {k}", "설명", "예시", "경제",
+                                       start + timedelta(hours=i % 12, minutes=k)) for k in range(1 + (n - i) % 4)])
+        ids = [a["id"] for a in db.search_articles(q=heads[i], date=day, limit=10)]
+        with db.connect() as conn:
+            cur = conn.execute("INSERT INTO summaries(date,hour,topic,title,summary,created_at) VALUES (?,?,?,?,?,?)",
+                               (day, 9 + i % 12, "경제", heads[i], f"{heads[i]} 요약.", "x"))
+            for aid in ids:
+                conn.execute("INSERT INTO summary_articles(summary_id,article_id) VALUES (?,?)", (cur.lastrowid, aid))
+
+
+def test_sentiment_of():
+    from app.daily import sentiment_of
+
+    assert sentiment_of("반도체 수출 호조…3개월 연속 증가") == "긍정"
+    assert sentiment_of("코스피 급락에 서킷브레이커 발동") == "부정"
+    assert sentiment_of("대통령, 동티모르와 정상회담") == "중립"
+
+
+def test_basic_daily_picks_5_to_10_with_sentiment():
+    from app import daily
+
+    _day_summaries("2026-11-05", 12)
+    out = daily.basic_daily("2026-11-05", db.search_summaries(date="2026-11-05", limit=1000))
+    assert 5 <= len(out["items"]) <= 10
+    assert all(i["sentiment"] in daily.SENTIMENTS for i in out["items"])
+    assert "긍정" in out["overview"] and "부정" in out["overview"]
+    # 같은 소식은 한 번만
+    titles = [i["title"] for i in out["items"]]
+    assert len(titles) == len(set(titles))
+
+
+def test_basic_daily_with_few_summaries_takes_all():
+    from app import daily
+
+    _day_summaries("2026-11-05", 3)
+    out = daily.basic_daily("2026-11-05", db.search_summaries(date="2026-11-05", limit=1000))
+    assert len(out["items"]) == 3
+
+
+def test_summarize_day_and_catch_up_skip_today():
+    from app import daily
+
+    today = db.now_kst().date()
+    yday = (today - timedelta(days=1)).isoformat()
+    _day_summaries(yday, 6)
+    _day_summaries(today.isoformat(), 6)
+    assert daily.catch_up_days() == 1          # 어제만 (오늘은 아직 안 끝남)
+    assert daily.catch_up_days() == 0          # 이미 정리한 날은 건너뜀
+    assert db.daily_dates() == [yday]
+    got = db.get_daily(yday)
+    assert got["method"] == "basic" and got["items"][0]["rank"] == 1 and got["items"][0]["articles"]
+
+
+def test_claude_daily_maps_summary_ids(monkeypatch):
+    from app import daily
+
+    _day_summaries("2026-11-05", 6)
+    summaries = db.search_summaries(date="2026-11-05", limit=1000)
+    sid = summaries[0]["id"]
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setattr(claude, "ask", lambda *a, **k: daily.DailyResult(overview="정리 문장", items=[
+        daily.DailyItem(sentiment="부정", topic="경제", title="t", summary="s", summary_ids=[sid, 9999]),
+        daily.DailyItem(sentiment="긍정", topic="없는테마", title="근거없음", summary="s", summary_ids=[9999]),
+    ]))
+    assert daily.summarize_day("2026-11-05") == 1
+    got = db.get_daily("2026-11-05")
+    assert got["method"] == "claude" and got["overview"] == "정리 문장"
+    assert got["items"][0]["sentiment"] == "부정" and len(got["items"][0]["articles"]) == len(summaries[0]["articles"])
+
+
+def test_daily_api_and_export(tmp_path):
+    import json
+
+    from app import daily, publish
+    from app.main import app
+
+    _day_summaries("2026-11-05", 6)
+    daily.summarize_day("2026-11-05")
+    with TestClient(app) as c:
+        assert c.get("/api/daily").json()["date"] == "2026-11-05"
+        assert c.get("/api/daily", params={"date": "2026-11-01"}).json()["items"] == []
+    out = tmp_path / "site"
+    out.mkdir()
+    publish.export(out, {"indices": [], "futures": {"kr": [], "us": []}, "errors": [], "updated_at": "x"},
+                   {"method": "basic", "headline": "", "points": [], "generated_at": "x"})
+    meta = json.loads((out / "data" / "meta.json").read_text(encoding="utf-8"))
+    assert meta["daily_dates"] == ["2026-11-05"]
+    assert json.loads((out / "data" / "daily" / "2026-11-05.json").read_text(encoding="utf-8"))["items"]

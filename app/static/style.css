@@ -80,3 +80,23 @@ table.fut tr:last-child td{border-bottom:0}
 .thead{display:inline-block;font-size:13px;font-weight:700;color:var(--accent);margin-bottom:2px}
 .tgroup .item+.item{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}
 .tgroup .item h3{margin-top:2px}
+/* 요약 탭: 하루 뉴스 정리 */
+.overview{margin-bottom:6px}
+.overview .ovhead{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+.overview .ovhead b{font-size:16px;margin-right:4px}
+.overview p{margin:0;line-height:1.7}
+.senti{display:inline-block;white-space:nowrap;flex-shrink:0;font-size:12px;font-weight:700;padding:1px 7px;border-radius:6px;margin-right:6px;vertical-align:2px}
+.senti.pos{background:#e3f4e8;color:#1e7a3c}
+.senti.neu{background:var(--chip);color:var(--sub)}
+.senti.neg{background:#fde6e4;color:#c0362c}
+@media (prefers-color-scheme:dark){.senti.pos{background:#173524;color:#7fd99b}.senti.neg{background:#3d1d1a;color:#ff8f84}}
+.item.daily h3{display:flex;align-items:baseline;gap:2px}
+.item.daily .rank{color:var(--accent);font-weight:800;margin-right:6px;min-width:18px}
+.item.daily .tag{margin-top:2px}
+/* 실시간 탭: 시간별/테마별 버튼과 시간별 묶음 */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.bar .seg button{border:0;border-radius:0}
+.bar .seg button+button{border-left:1px solid var(--line)}
+.bar .seg button.on{background:var(--accent);color:#fff}
+.hgroup+.hgroup{margin-top:18px}
+.hhead{font-size:15px;font-weight:800;color:var(--ink);padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:8px}

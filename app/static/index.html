@@ -29,6 +29,16 @@
   </section>
 </main>
 
+<!-- 요약 탭: 하루 뉴스 정리 -->
+<main class="wrap hidden" id="dailyView">
+  <h1 id="dailyTitle">하루 뉴스 정리</h1>
+  <p class="lead">하루가 끝나면 그날의 중요한 뉴스 5~10개와 전체 흐름을 정리해 드려요.</p>
+  <div class="status" id="dailyStatus"></div>
+  <section class="card overview" id="dailyOverview"></section>
+  <h2 id="dailyListHead">중요 뉴스</h2>
+  <div class="card" id="dailyList"></div>
+</main>
+
 <main class="wrap hidden" id="liveView">
   <h1>실시간 시장 · 뉴스</h1>
   <p class="lead" id="liveLead"></p>
@@ -59,6 +69,10 @@
         <option value="1800">30분</option>
       </select>
       <button id="now" type="button">지금 새로고침</button>
+      <!-- 뉴스 보기 방식: 시간별 / 테마별 -->
+      <span class="seg" id="viewMode">
+        <button type="button" data-mode="time">시간별</button><button type="button" data-mode="topic">테마별</button>
+      </span>
       <span class="meta" id="meta"></span>
     </div>
     <div class="feed" id="feed"></div>

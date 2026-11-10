@@ -15,9 +15,12 @@ from pydantic import BaseModel
 from . import claude, config, db, similar
 from .topics import TOPICS, classify
 
+# 로그 기록용
 log = logging.getLogger(__name__)
 
+# 한 시간에 요약할 최대 기사 수 (넘으면 최신 기사만)
 MAX_ARTICLES_PER_HOUR = 400
+# 테마마다 최대 요약 수
 MAX_PER_TOPIC = 3
 # 중복 확인에 쓰는 지난 요약 범위(시간)
 LOOKBACK_HOURS = 12
@@ -28,6 +31,7 @@ VERSION = "v2"
 
 
 class DigestItem(BaseModel):
+    """시간별 요약 한 건 (Claude 응답 형식)."""
     topic: str
     title: str
     summary: str
@@ -35,9 +39,11 @@ class DigestItem(BaseModel):
 
 
 class Digest(BaseModel):
+    """한 시간의 요약 목록 (Claude 응답 형식)."""
     items: list[DigestItem]
 
 
+# Claude에게 주는 역할 설명
 SYSTEM = (
     "당신은 한국 경제신문의 데스크 기자입니다. 한 시간 동안 들어온 기사 목록을 받아 "
     "테마별로 정말 중요한 뉴스만 골라 요약합니다. 같은 사건을 다룬 기사는 하나로 묶고, "
@@ -46,6 +52,7 @@ SYSTEM = (
 
 
 def _prompt(articles: list[dict], start: datetime, previous: list[str]) -> str:
+    """Claude에게 보낼 요청문: 규칙 + 이미 요약한 소식 + 그 시간의 기사 목록."""
     lines = [
         f"{start:%Y-%m-%d %H}:00 ~ {start + timedelta(hours=1):%H}:00 (한국시간)에 들어온 기사 {len(articles)}건입니다.",
         "",
@@ -70,6 +77,7 @@ def _prompt(articles: list[dict], start: datetime, previous: list[str]) -> str:
 
 
 def _sentences(text: str, n: int = 3) -> str:
+    """앞에서부터 n문장만 남긴다."""
     parts = [p.strip() for p in re.split(r"(?<=[.!?다])\s+", text) if p.strip()]
     return " ".join(parts[:n]) if parts else text
 
@@ -83,6 +91,7 @@ def _useful_description(a: dict) -> str:
 
 
 def _already_covered(title: str, previous: list[str]) -> bool:
+    """최근에 이미 요약한 소식과 같은지."""
     return any(similar.same_story(title, p) for p in previous)
 
 
@@ -132,6 +141,7 @@ def basic_digest(articles: list[dict], previous: list[str] | None = None) -> lis
 
 
 def claude_digest(articles: list[dict], start: datetime, previous: list[str]) -> list[dict] | None:
+    """Claude로 한 시간 요약. 실패하면 None (기본 모드로 대신)."""
     result = claude.ask(SYSTEM, _prompt(articles, start, previous), Digest, effort="low")
     if result is None:
         return None
