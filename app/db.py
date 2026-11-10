@@ -1,6 +1,7 @@
 """SQLite 저장소: 원문 기사, 시간별 요약, 요약에 쓰인 기사 연결."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Iterator
 
 from . import config
 
+# 테이블 구조 (처음 실행할 때 만들어진다)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +43,27 @@ CREATE TABLE IF NOT EXISTS summary_articles (
     PRIMARY KEY (summary_id, article_id)
 );
 
+-- 하루 정리 ('요약' 탭): 날짜별 한 줄, 그날 뉴스 상황 문장
+CREATE TABLE IF NOT EXISTS daily_digests (
+    date TEXT PRIMARY KEY,        -- YYYY-MM-DD (KST)
+    method TEXT NOT NULL,         -- 'claude' 또는 'basic'
+    overview TEXT NOT NULL,       -- 그날 뉴스 상황 정리
+    created_at TEXT NOT NULL
+);
+
+-- 하루 정리에 고른 중요 기사 (날짜별 5~10건)
+CREATE TABLE IF NOT EXISTS daily_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL REFERENCES daily_digests(date) ON DELETE CASCADE,
+    rank INTEGER NOT NULL,        -- 중요도 순서 (1이 가장 중요)
+    sentiment TEXT NOT NULL,      -- 긍정 / 중립 / 부정
+    topic TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    article_ids TEXT NOT NULL     -- 근거 기사 id 목록 (JSON 배열)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_items_date ON daily_items(date, rank);
+
 -- 요약이 끝난 시간대 기록 (같은 시간대를 두 번 요약하지 않도록)
 CREATE TABLE IF NOT EXISTS digests (
     date TEXT NOT NULL,
@@ -54,6 +77,7 @@ CREATE TABLE IF NOT EXISTS digests (
 
 @dataclass
 class Article:
+    """수집한 기사 한 건 (저장 전 형태)."""
     url: str
     title: str
     description: str
@@ -63,11 +87,13 @@ class Article:
 
 
 def _path() -> Path:
+    """SQLite 파일 경로 (설정값)."""
     return Path(config.DB_PATH)
 
 
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
+    """DB 연결을 열고, 작업이 끝나면 저장(commit)하고 닫는다."""
     path = _path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10)
@@ -81,16 +107,19 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 def init() -> None:
+    """테이블이 없으면 만든다 (서버·사이트 생성 시작 때 호출)."""
     with connect() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
 
 
 def now_kst() -> datetime:
+    """지금 시각 (한국시간)."""
     return datetime.now(config.KST)
 
 
 def _like(q: str) -> str:
+    """LIKE 검색용 패턴. %, _ 같은 특수문자는 글자 그대로 찾도록 바꾼다."""
     return "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
@@ -113,6 +142,7 @@ def insert_articles(items: list[Article]) -> int:
 
 
 def articles_between(start: datetime, end: datetime) -> list[dict]:
+    """start 이상 end 미만에 발행된 기사 (시간순)."""
     with connect() as conn:
         rows = conn.execute(
             "SELECT * FROM articles WHERE published_at >= ? AND published_at < ? ORDER BY published_at",
@@ -135,6 +165,7 @@ def latest_articles(after_id: int = 0, limit: int = 30, topic: str | None = None
 
 
 def get_articles(ids: list[int]) -> list[dict]:
+    """id 목록에 해당하는 기사들."""
     if not ids:
         return []
     marks = ",".join("?" * len(ids))
@@ -145,6 +176,7 @@ def get_articles(ids: list[int]) -> list[dict]:
 
 def search_articles(q: str | None = None, topic: str | None = None, date: str | None = None,
                     limit: int = 50) -> list[dict]:
+    """원문 기사 검색 (검색어·테마·날짜, 최신순)."""
     sql = "SELECT * FROM articles WHERE 1=1"
     args: list = []
     if q:
@@ -165,6 +197,7 @@ def search_articles(q: str | None = None, topic: str | None = None, date: str | 
 # ---------- 요약 ----------
 
 def digest_done(date: str, hour: int) -> bool:
+    """그 시간대의 시간별 요약이 이미 끝났는지."""
     with connect() as conn:
         return conn.execute("SELECT 1 FROM digests WHERE date=? AND hour=?", (date, hour)).fetchone() is not None
 
@@ -204,12 +237,63 @@ def recent_summary_titles(before: datetime, hours: int = 12) -> list[str]:
 
 
 def digests_since(since: datetime) -> list[dict]:
+    """since 이후 시간별 요약 기록 (시간순)."""
     with connect() as conn:
         rows = conn.execute(
             "SELECT * FROM digests WHERE date || printf('T%02d', hour) >= ? ORDER BY date, hour",
             (since.strftime("%Y-%m-%dT%H"),),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------- 하루 정리 ('요약' 탭) ----------
+
+def daily_done(date: str) -> bool:
+    """그날의 하루 정리가 이미 있는지."""
+    with connect() as conn:
+        return conn.execute("SELECT 1 FROM daily_digests WHERE date=?", (date,)).fetchone() is not None
+
+
+def save_daily(date: str, method: str, overview: str, items: list[dict]) -> None:
+    """하루 정리 저장 (같은 날짜는 덮어쓴다). items: [{sentiment, topic, title, summary, article_ids}]"""
+    created = now_kst().isoformat(timespec="seconds")
+    with connect() as conn:
+        conn.execute("DELETE FROM daily_items WHERE date=?", (date,))
+        conn.execute(
+            "INSERT OR REPLACE INTO daily_digests(date,method,overview,created_at) VALUES (?,?,?,?)",
+            (date, method, overview, created),
+        )
+        for rank, it in enumerate(items, start=1):
+            conn.execute(
+                "INSERT INTO daily_items(date,rank,sentiment,topic,title,summary,article_ids) VALUES (?,?,?,?,?,?,?)",
+                (date, rank, it["sentiment"], it["topic"], it["title"], it["summary"],
+                 json.dumps(it.get("article_ids", []))),
+            )
+
+
+def get_daily(date: str) -> dict | None:
+    """화면에 보여줄 하루 정리. 기사 목록에는 원문 제목·링크를 붙인다. 없으면 None."""
+    with connect() as conn:
+        head = conn.execute("SELECT * FROM daily_digests WHERE date=?", (date,)).fetchone()
+        if head is None:
+            return None
+        rows = conn.execute("SELECT * FROM daily_items WHERE date=? ORDER BY rank", (date,)).fetchall()
+    items = []
+    for r in rows:
+        item = dict(r)
+        ids = json.loads(item.pop("article_ids"))
+        arts = {a["id"]: a for a in get_articles(ids)}
+        item["articles"] = [
+            {k: arts[i][k] for k in ("id", "title", "url", "source", "published_at")} for i in ids if i in arts
+        ]
+        items.append(item)
+    return dict(head) | {"items": items}
+
+
+def daily_dates() -> list[str]:
+    """하루 정리가 있는 날짜 목록 (최신순)."""
+    with connect() as conn:
+        return [r[0] for r in conn.execute("SELECT date FROM daily_digests ORDER BY date DESC")]
 
 
 def drop_unknown_topics(topics: list[str]) -> int:

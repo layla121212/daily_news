@@ -15,11 +15,13 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import analysis, config, db, jobs, market, similar, sources, summarizer
+from . import analysis, config, daily, db, jobs, market, similar, sources, summarizer
 from .topics import TOPICS
 
+# 로그 기록용
 log = logging.getLogger("publish")
 
+# 화면 파일 폴더 (사이트로 복사한다)
 STATIC = config.BASE_DIR / "app" / "static"
 
 # 연결된 요약이 없는 기사는 이 기간이 지나면 지운다 (저장소 크기 관리)
@@ -38,11 +40,13 @@ def market_hours(now: datetime) -> bool:
 
 
 def _write(path: Path, data) -> None:
+    """JSON 파일로 저장 (폴더가 없으면 만든다)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
 
 def prune() -> int:
+    """보관 기간이 지난 기사 중 요약에 쓰이지 않은 것을 지운다. 지운 수를 돌려준다."""
     cutoff = (db.now_kst() - timedelta(days=ARTICLE_RETENTION_DAYS)).isoformat(timespec="seconds")
     with db.connect() as conn:
         n = conn.execute(
@@ -87,6 +91,7 @@ def live_news() -> list[dict]:
 
 
 def export(out: Path, mkt: dict, ana: dict) -> None:
+    """웹페이지와 data/*.json 파일을 out 폴더에 쓴다."""
     data = out / "data"
     with db.connect() as conn:
         dates = [r[0] for r in conn.execute("SELECT DISTINCT date FROM summaries ORDER BY date DESC")]
@@ -103,12 +108,17 @@ def export(out: Path, mkt: dict, ana: dict) -> None:
     _write(data / "live" / "market.json", mkt)
     _write(data / "live" / "analysis.json", ana)
     _write(data / "live" / "news.json", live_news())
+    # '요약' 탭: 날짜별 하루 정리 파일
+    daily_dates = db.daily_dates()
+    for d in daily_dates:
+        _write(data / "daily" / f"{d}.json", db.get_daily(d))
     _write(data / "meta.json", {
         "updated_at": db.now_kst().isoformat(timespec="seconds"),
         "today": db.now_kst().date().isoformat(),
         "topics": TOPICS,
         "summary_dates": dates,
         "article_dates": art_dates,
+        "daily_dates": daily_dates,  # 하루 정리가 있는 날짜 (최신순)
     })
     # 웹페이지: 서버 없이 JSON 파일을 읽는 모드로 표시
     html = (STATIC / "index.html").read_text(encoding="utf-8").replace('<html lang="ko">', '<html lang="ko" data-mode="static">', 1)
@@ -119,6 +129,7 @@ def export(out: Path, mkt: dict, ana: dict) -> None:
 
 
 def main() -> None:
+    """GitHub Actions가 실행하는 진입점: 수집 → 요약 → 하루 정리 → 시세·분석 → 사이트 생성."""
     p = argparse.ArgumentParser()
     p.add_argument("--out", type=Path, required=True, help="사이트 파일을 쓸 폴더")
     p.add_argument("--state", type=Path, default=Path(config.DB_PATH).parent / "analysis.json",
@@ -133,6 +144,8 @@ def main() -> None:
         sources.collect()
         jobs.catch_up(hours=3)
         log.info("옛 방식 요약 %d개 시간대 다시 만듦", summarizer.rebuild_outdated())
+        # 하루가 끝난 날(어제 등)의 '요약' 탭 정리. 시간별 요약이 끝난 뒤에 만들어야 23시까지 들어간다.
+        log.info("하루 정리 %d일치 만듦", daily.catch_up_days())
         log.info("오래된 기사 %d건 정리", prune())
     mkt = market.fetch_market()
     ana = _analysis(args.state, mkt)

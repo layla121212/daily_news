@@ -10,33 +10,41 @@ from pydantic import BaseModel
 
 from . import claude, config, db
 
+# 로그 기록용
 log = logging.getLogger(__name__)
 
+# 지수 분석에 근거로 쓸 테마 (시장과 관련 깊은 테마만)
 MARKET_TOPICS = ("증시·투자", "경제", "산업·기업", "국제")
 
 
 class Point(BaseModel):
+    """지수 변화 이유 하나 (Claude 응답 형식)."""
     title: str
     detail: str
     evidence_ids: list[int]
 
 
 class Analysis(BaseModel):
+    """지수 변화 분석 전체 (Claude 응답 형식): 한 줄 요약 + 이유 목록."""
     headline: str
     points: list[Point]
 
 
+# Claude에게 주는 역할 설명
 SYSTEM = (
     "당신은 한국 증시 애널리스트입니다. 현재 지수·선물 시세와 최근 뉴스만 근거로 "
     "지수가 왜 이렇게 움직이고 있는지 일반 독자가 이해하기 쉽게 설명합니다. "
     "뉴스에 근거가 없는 추측은 하지 않고, 매수·매도 권유는 하지 않습니다."
 )
 
+# 여러 요청이 동시에 분석을 만들지 않게 하는 잠금
 _lock = threading.Lock()
+# 마지막 분석과 만든 시각 (ANALYSIS_TTL 동안 재사용)
 _cache: dict = {"at": 0.0, "data": None}
 
 
 def _fmt(d: dict) -> str:
+    """시세 한 줄 문자열 (예: '코스피: 2,800.00 (+0.50%)')."""
     if d.get("price") is None:
         return f"{d['name']}: 데이터 없음"
     pct = d.get("change_pct")
@@ -44,6 +52,7 @@ def _fmt(d: dict) -> str:
 
 
 def _recent_news(hours: int = 3, limit: int = 80) -> list[dict]:
+    """최근 hours시간 기사 중 시장 관련 테마 기사 (최대 limit건)."""
     now = db.now_kst()
     rows = db.articles_between(now - timedelta(hours=hours), now + timedelta(minutes=1))
     rows = [r for r in rows if r["topic"] in MARKET_TOPICS] or rows
@@ -51,6 +60,7 @@ def _recent_news(hours: int = 3, limit: int = 80) -> list[dict]:
 
 
 def _prompt(market: dict, news: list[dict]) -> str:
+    """Claude에게 보낼 요청문: 현재 시세 + 최근 뉴스 + 요청 사항."""
     lines = ["[현재 시세]"]
     for d in market["indices"]:
         series = d.get("series") or []
@@ -74,6 +84,7 @@ def _prompt(market: dict, news: list[dict]) -> str:
 
 
 def _fallback(news: list[dict], reason: str) -> dict:
+    """AI 분석을 못 할 때: 이유와 함께 시장 관련 최신 뉴스 5건을 보여준다."""
     evidence = [{"id": a["id"], "title": a["title"], "url": a["url"], "source": a["source"]}
                 for a in news[-5:][::-1]]
     return {
@@ -84,6 +95,7 @@ def _fallback(news: list[dict], reason: str) -> dict:
 
 
 def build(market: dict) -> dict:
+    """지수 변화 분석을 새로 만든다 (Claude 또는 대체 내용)."""
     news = _recent_news()
     if not config.has_claude_credentials():
         out = _fallback(news, "ANTHROPIC_API_KEY가 설정되지 않았어요.")
